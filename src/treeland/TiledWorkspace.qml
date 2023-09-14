@@ -138,8 +138,8 @@ Item {
                 Layout.minimumHeight: Math.max(surface.minimumSize.height, 50)
                 Layout.maximumWidth: surface.maximumSize.width
                 Layout.maximumHeight: surface.maximumSize.height
-                //Layout.horizontalStretchFactor: 1
-                //Layout.verticalStretchFactor: 1
+               // Layout.horizontalStretchFactor: 1
+               // Layout.verticalStretchFactor: 1
 
                 TiledToplevelHelper {
                     id: helper
