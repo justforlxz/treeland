@@ -112,6 +112,14 @@ class FpsDisplayManager;
 class ScreensaverInterfaceV1;
 class SettingManager;
 
+// Event filter forward declarations
+class IInputEventFilter;
+class SystemShortcutFilter;
+class LockScreenFilter;
+class WorkspaceFilter;
+class GlobalShortcutFilter;
+
+
 struct wlr_idle_inhibitor_v1;
 struct wlr_output_power_v1_set_mode_event;
 struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request;
@@ -159,6 +167,12 @@ class Helper : public WSeatEventFilter
     Q_PROPERTY(bool noAnimation READ noAnimation WRITE setNoAnimation NOTIFY noAnimationChanged FINAL)
     QML_ELEMENT
     QML_SINGLETON
+
+    friend class SystemShortcutFilter;
+    friend class LockScreenFilter;
+    friend class WorkspaceFilter;
+    friend class GlobalShortcutFilter;
+
 
 public:
     explicit Helper(QObject *parent = nullptr);
@@ -356,6 +370,10 @@ private:
     void restoreFromShowDesktop(SurfaceWrapper *activeSurface = nullptr);
     void setNoAnimation(bool noAnimation);
 
+    void installEventFilter(IInputEventFilter *filter);
+    void uninstallEventFilter(IInputEventFilter *filter);
+
+
     std::shared_ptr<Session> ensureSession(int id, QString username);
     void updateActiveUserSession(const QString &username, int id);
     bool isXWaylandClient(WClient *client);
@@ -449,6 +467,9 @@ private:
         bool allSuccess = true;
     };
     PendingOutputConfig m_pendingOutputConfig;
+
+    QList<IInputEventFilter *> m_inputEventFilters;
+
 
     void onOutputCommitFinished(qw_output_configuration_v1 *config, bool success);
 };

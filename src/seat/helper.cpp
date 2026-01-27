@@ -10,6 +10,13 @@
 #include "modules/dde-shell/ddeshellattached.h"
 #include "modules/dde-shell/ddeshellmanagerinterfacev1.h"
 #include "input/inputdevice.h"
+
+#include "input/globalshortcutfilter.h"
+#include "input/iinputeventfilter.h"
+#include "input/lockscreenfilter.h"
+#include "input/systemshortcutfilter.h"
+#include "input/workspacefilter.h"
+
 #include "core/layersurfacecontainer.h"
 #include "greeter/usermodel.h"
 #ifdef EXT_SESSION_LOCK_V1
@@ -1226,6 +1233,12 @@ void Helper::init(Treeland::Treeland *treeland)
 
     m_seat = m_server->attach<WSeat>();
     m_seat->setEventFilter(this);
+
+    installEventFilter(new LockScreenFilter(this, this));
+    installEventFilter(new SystemShortcutFilter(this, this));
+    installEventFilter(new WorkspaceFilter(this, this));
+    installEventFilter(new GlobalShortcutFilter(m_shortcutManager, this));
+
     m_seat->setCursor(m_rootSurfaceContainer->cursor());
     m_seat->setKeyboardFocusWindow(m_renderWindow);
 
@@ -1619,127 +1632,12 @@ bool Helper::beforeDisposeEvent(WSeat *seat, QWindow *, QInputEvent *event)
     if (event->isInputEvent()) {
         m_idleNotifier->notify_activity(seat->nativeHandle());
     }
-    // NOTE: Unable to distinguish meta from other key combinations
-    //       For example, Meta+S will still receive Meta release after
-    //       fully releasing the key, actively detect whether there are
-    //       other keys, and reset the state.
-    if (event->type() == QEvent::KeyPress) {
-        auto kevent = static_cast<QKeyEvent *>(event);
-        switch (kevent->key()) {
-        case Qt::Key_Meta:
-        case Qt::Key_Super_L:
-            m_singleMetaKeyPendingPressed = true;
-            break;
-        default:
-            m_singleMetaKeyPendingPressed = false;
-            break;
-        }
-    }
 
-    if (event->type() == QEvent::KeyPress) {
-        auto kevent = static_cast<QKeyEvent *>(event);
-
-        // The debug view shortcut should always handled first
-        if (QKeySequence(kevent->keyCombination())
-            == QKeySequence(Qt::ControlModifier | Qt::ShiftModifier | Qt::MetaModifier | Qt::Key_F11)) {
-            if (toggleDebugMenuBar())
-                return true;
-        }
-
-        // Switch TTY with Ctrl + Alt + F1-F12
-        if (kevent->modifiers() == (Qt::ControlModifier | Qt::AltModifier)) {
-            auto key = kevent->key();
-            // We don't call libseat_disable_seat after switching TTY by
-            // calling DDM, which will cause the keyboard stuck in current
-            // state (Ctrl + Alt + Fx), and send switchToVt repeatly.
-            // Check if the backend is active to avoid this.
-            if (key >= Qt::Key_F1 && key <= Qt::Key_F12 && m_backend->isSessionActive()) {
-                const int vtnr = key - Qt::Key_F1 + 1;
-                if (m_ddmInterfaceV1 && m_ddmInterfaceV1->isConnected()) {
-                    m_ddmInterfaceV1->switchToVt(vtnr);
-                } else {
-                    qCDebug(treelandCore) << "DDM is not connected";
-                    showLockScreen(false);
-                    m_backend->session()->change_vt(vtnr);
-                }
-                return true;
-            }
-        }
-
-        if (m_captureSelector) {
-            if (event->modifiers() == Qt::NoModifier && kevent->key() == Qt::Key_Escape)
-                m_captureSelector->cancelSelection();
-        }
-    }
-
-    if (event->type() == QEvent::KeyRelease && !m_captureSelector) {
-        auto kevent = static_cast<QKeyEvent *>(event);
-        if (m_taskSwitch && m_taskSwitch->property("switchOn").toBool()) {
-            if (kevent->key() == Qt::Key_Alt || kevent->key() == Qt::Key_Meta) {
-                auto filter = Helper::instance()->workspace()->currentFilter();
-                filter->setFilterAppId("");
-                setCurrentMode(CurrentMode::Normal);
-                QMetaObject::invokeMethod(m_taskSwitch, "exit");
-            }
-        }
-    }
-
-    if (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonRelease) {
-        handleLeftButtonStateChanged(event);
-    }
-
-    if (event->type() == QEvent::Wheel) {
-        handleWhellValueChanged(event);
-    }
-
-    if (event->type() == QEvent::MouseMove || event->type() == QEvent::MouseButtonPress) {
-        seat->cursor()->setVisible(true);
-    } else if (event->type() == QEvent::TouchBegin) {
-        seat->cursor()->setVisible(false);
-    }
-
-    doGesture(event);
-
-    if (auto surface = m_rootSurfaceContainer->moveResizeSurface()) {
-        // for move resize
-        if (Q_LIKELY(event->type() == QEvent::MouseMove || event->type() == QEvent::TouchUpdate)) {
-            auto cursor = seat->cursor();
-            Q_ASSERT(cursor);
-            QMouseEvent *ev = static_cast<QMouseEvent *>(event);
-
-            auto ownsOutput = surface->ownsOutput();
-            if (!ownsOutput) {
-                m_rootSurfaceContainer->endMoveResize();
-                return false;
-            }
-
-            auto lastPosition =
-                m_fakelastPressedPosition.value_or(cursor->lastPressedOrTouchDownPosition());
-            auto increment_pos = ev->globalPosition() - lastPosition;
-            m_rootSurfaceContainer->doMoveResize(increment_pos);
-
+    for (IInputEventFilter *filter : std::as_const(m_inputEventFilters)) {
+        IInputEventFilter::FilterResult result = filter->beforeDisposeEvent(seat, m_renderWindow, event);
+        if (result == IInputEventFilter::FilterAccepted) {
             return true;
-        } else if (event->type() == QEvent::MouseButtonRelease
-                   || event->type() == QEvent::TouchEnd) {
-            m_rootSurfaceContainer->endMoveResize();
-            m_fakelastPressedPosition.reset();
         }
-    }
-
-    // handle shortcut
-    if (!m_captureSelector && m_currentMode != CurrentMode::LockScreen &&
-        (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease)) {
-        do {
-            auto kevent = static_cast<QKeyEvent *>(event);
-            // SKIP Meta+Meta
-            if (kevent->key() == Qt::Key_Meta && kevent->modifiers() == Qt::NoModifier
-                && !m_singleMetaKeyPendingPressed) {
-                break;
-            }
-
-            if (m_shortcutManager->controller()->dispatchKeyEvent(kevent))
-                return true;
-        } while (false);
     }
 
     return false;
@@ -2961,4 +2859,18 @@ bool Helper::setXWindowPositionRelative(uint wid, WSurface *anchor, wl_fixed_t d
     rect.translate(wl_fixed_to_double(dx), wl_fixed_to_double(dy));
     target->setPosition(rect.topLeft());
     return true;
+}
+
+void Helper::installEventFilter(IInputEventFilter *filter)
+{
+    if (filter && !m_inputEventFilters.contains(filter)) {
+        m_inputEventFilters.append(filter);
+    }
+}
+
+void Helper::uninstallEventFilter(IInputEventFilter *filter)
+{
+    if (filter) {
+        m_inputEventFilters.removeOne(filter);
+    }
 }

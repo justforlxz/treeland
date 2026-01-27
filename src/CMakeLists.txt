@@ -136,12 +136,22 @@ qt_add_qml_module(libtreeland
         $<$<NOT:$<BOOL:${DISABLE_DDM}>>:greeter/user.h>
         $<$<NOT:$<BOOL:${DISABLE_DDM}>>:greeter/usermodel.cpp>
         $<$<NOT:$<BOOL:${DISABLE_DDM}>>:greeter/usermodel.h>
-        input/gestures.cpp
         input/gestures.h
+        input/gestures.cpp
+        input/togglablegesture.h
+        input/togglablegesture.cpp
         input/inputdevice.cpp
         input/inputdevice.h
-        input/togglablegesture.cpp
-        input/togglablegesture.h
+        input/globalshortcutfilter.cpp
+        input/globalshortcutfilter.h
+        input/iinputeventfilter.cpp
+        input/iinputeventfilter.h
+        input/lockscreenfilter.cpp
+        input/lockscreenfilter.h
+        input/systemshortcutfilter.cpp
+        input/systemshortcutfilter.h
+        input/workspacefilter.cpp
+        input/workspacefilter.h
         interfaces/baseplugininterface.h
         interfaces/lockscreeninterface.h
         interfaces/multitaskviewinterface.h
